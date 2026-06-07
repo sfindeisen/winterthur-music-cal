@@ -13,7 +13,6 @@ ZURICH = pytz.timezone("Europe/Zurich")
 
 
 def _parse_date(text: str) -> datetime | None:
-    # Replace non-breaking spaces and normalize whitespace
     text = text.replace("\xa0", " ").replace("Uhr", "").strip()
     parts = text.split()
     if not parts:
@@ -42,8 +41,8 @@ def scrape() -> list[Event]:
     events = []
 
     date_markers = [
-        tag for tag in soup.find_all("h5")
-        if DATE_RE.search(tag.get_text())
+        t for t in soup.find_all("h5")
+        if DATE_RE.search(t.get_text())
     ]
 
     for marker in date_markers:
@@ -51,30 +50,34 @@ def scrape() -> list[Event]:
         if dt is None:
             continue
 
+        # City is the next h5 sibling inside the same parent div
         location_city = ""
-        location_venue = ""
+        for sib in marker.next_siblings:
+            if getattr(sib, "name", None) == "h5":
+                location_city = sib.get_text(strip=True)
+                break
+
+        # The h2 (title) and p (description) are in the NEXT sibling div
+        # of this marker's parent
+        parent = marker.parent
+        if parent is None:
+            continue
+
         title = ""
         description = ""
-        h5_count = 0
-        h2_found = False
+        location_venue = ""
 
-        for sib in marker.next_siblings:
-            if not hasattr(sib, "name") or sib.name is None:
+        # Walk next siblings of the parent div to find the content div
+        for next_div in parent.next_siblings:
+            if getattr(next_div, "name", None) != "div":
                 continue
-            if sib.name == "h5" and DATE_RE.search(sib.get_text()):
-                break
-            if sib.name == "h5":
-                h5_count += 1
-                if h5_count == 1:
-                    location_city = sib.get_text(strip=True)
-            elif sib.name == "p" and not h2_found:
-                location_venue = sib.get_text(strip=True)
-            elif sib.name == "h2":
-                title = sib.get_text(strip=True)
-                h2_found = True
-            elif sib.name == "p" and h2_found:
-                description = sib.get_text(strip=True)
-                break
+            h2 = next_div.find("h2")
+            if h2:
+                title = h2.get_text(strip=True)
+                p = next_div.find("p")
+                if p:
+                    description = p.get_text(strip=True)
+            break  # only look at the immediately next div
 
         if not title:
             continue
