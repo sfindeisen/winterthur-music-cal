@@ -21,7 +21,6 @@ def _parse_date(text: str):
 
 
 def _fetch_detail(url: str) -> tuple[str, str]:
-    """Returns (description, location). Both may be empty string."""
     try:
         time.sleep(0.5)
         resp = requests.get(url, headers=HEADERS, timeout=15)
@@ -33,7 +32,6 @@ def _fetch_detail(url: str) -> tuple[str, str]:
     description = ""
     location = ""
 
-    # Try to find main content area
     content = (
         soup.find("div", class_=lambda c: c and "entry-content" in c)
         or soup.find("article")
@@ -45,9 +43,7 @@ def _fetch_detail(url: str) -> tuple[str, str]:
         if p:
             description = p.get_text(strip=True)
 
-    # Look for location label
-    full_text = soup.get_text(separator="\n")
-    for line in full_text.splitlines():
+    for line in soup.get_text(separator="\n").splitlines():
         line = line.strip()
         if line.startswith("Ort:") or line.startswith("Adresse:"):
             location = line.split(":", 1)[-1].strip()
@@ -75,15 +71,19 @@ def scrape() -> list[Event]:
         title = h3.get_text(strip=True)
         detail_url = a.get("href", URL)
 
-        # The date string is a text node immediately after the h3
+        # Date is in the <p> immediately after the <h3>
         date_str = ""
         for sib in h3.next_siblings:
-            text = str(sib).strip()
-            if text:
-                date_str = text
+            if not hasattr(sib, "name") or sib.name is None:
+                continue
+            if sib.name == "p":
+                date_str = sib.get_text(strip=True)
                 break
 
-        dt = _parse_date(date_str) if date_str else None
+        if not date_str:
+            continue
+
+        dt = _parse_date(date_str)
         if dt is None:
             continue
 
@@ -100,4 +100,3 @@ def scrape() -> list[Event]:
         ))
 
     return events
-
