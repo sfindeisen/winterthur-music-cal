@@ -2,7 +2,6 @@ requests
 beautifulsoup4
 dateparser
 pytz
-rich
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib

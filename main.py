@@ -1,11 +1,10 @@
+#!/usr/bin/env python3
+
 import argparse
 from datetime import datetime, timedelta
 
 import pytz
-from rich.console import Console
-from rich.table import Table
 
-console = Console()
 ZURICH = pytz.timezone("Europe/Zurich")
 
 
@@ -56,12 +55,12 @@ def collect_events(school: str):
 
     events = []
     for fn in chosen:
-        console.print(f"[dim]Scraping {fn.__module__}...[/dim]")
+        print(f"Scraping {fn.__module__}...")
         try:
             result = fn()
             events.extend(result)
         except Exception as e:
-            console.print(f"[red]Error in {fn.__module__}: {e}[/red]")
+            print(f"Error in {fn.__module__}: {e}")
 
     return events
 
@@ -73,21 +72,13 @@ def filter_events(events, days_ahead: int):
 
 
 def print_table(events):
-    table = Table(show_header=True, header_style="bold cyan")
-    table.add_column("School", style="dim", max_width=30)
-    table.add_column("Title", max_width=45)
-    table.add_column("Date", max_width=18)
-    table.add_column("Location", max_width=30)
-
+    print(f"\n{'School':<30} {'Date':<18} Title")
+    print("-" * 80)
     for ev in events:
-        table.add_row(
-            ev.source,
-            ev.title,
-            ev.date.strftime("%a %d.%m.%Y %H:%M"),
-            ev.location,
-        )
-
-    console.print(table)
+        date_str = ev.date.strftime("%a %d.%m.%Y %H:%M")
+        print(f"{ev.source:<30} {date_str:<18} {ev.title}")
+        if ev.location:
+            print(f"{'':30} {'':18} {ev.location}")
 
 
 def main():
@@ -98,20 +89,16 @@ def main():
     events.sort(key=lambda e: e.date)
 
     print_table(events)
-    console.print(f"\n[bold]{len(events)} events found[/bold]")
+    print(f"\n{len(events)} events found")
 
     if args.dry_run:
-        console.print("[yellow]Dry run — not writing to Google Calendar.[/yellow]")
+        print("Dry run — not writing to Google Calendar.")
         return
 
     from gcal import add_events
     result = add_events(events, args.calendar_id, dry_run=False)
-    console.print(
-        f"[green]{result['added']} added to Google Calendar[/green], "
-        f"[dim]{result['skipped']} skipped (already exist)[/dim]"
-    )
+    print(f"{result['added']} added to Google Calendar, {result['skipped']} skipped (already exist)")
 
 
 if __name__ == "__main__":
     main()
-
