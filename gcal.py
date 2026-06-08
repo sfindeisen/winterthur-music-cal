@@ -61,7 +61,7 @@ def add_events(events: list[Event], calendar_id: str, dry_run: bool) -> dict:
                     calendarId=calendar_id,
                     timeMin=event.date.isoformat(),
                     timeMax=(event.date + timedelta(days=1)).isoformat(),
-                    q=event.title,
+                    q=event.title + '###' + event.location,
                     singleEvents=True,
                 ).execute()
             else:
@@ -69,7 +69,7 @@ def add_events(events: list[Event], calendar_id: str, dry_run: bool) -> dict:
                     calendarId=calendar_id,
                     timeMin=event.date.isoformat(),
                     timeMax=(event.date + timedelta(minutes=1)).isoformat(),
-                    q=event.title,
+                    q=event.title + '###' + event.location,
                     singleEvents=True,
                 ).execute()
         except Exception as e:
