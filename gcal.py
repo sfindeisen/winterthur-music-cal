@@ -1,5 +1,5 @@
 import os
-from datetime import timedelta
+from datetime import timedelta, date as date_type
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -35,6 +35,11 @@ def _get_credentials() -> Credentials:
     return creds
 
 
+def _is_all_day(event: Event) -> bool:
+    """True when the scraper found no time — stored as midnight."""
+    return event.date.hour == 0 and event.date.minute == 0
+
+
 def add_events(events: list[Event], calendar_id: str, dry_run: bool) -> dict:
     if dry_run:
         return {"added": 0, "skipped": 0}
@@ -46,17 +51,27 @@ def add_events(events: list[Event], calendar_id: str, dry_run: bool) -> dict:
     skipped = 0
 
     for event in events:
-        # Dedup: search for events with same title within a 1-minute window
-        time_min = event.date.isoformat()
-        time_max = (event.date + timedelta(minutes=1)).isoformat()
+        all_day = _is_all_day(event)
+        date_str = event.date.strftime("%Y-%m-%d")
+
+        # Dedup check
         try:
-            existing = service.events().list(
-                calendarId=calendar_id,
-                timeMin=time_min,
-                timeMax=time_max,
-                q=event.title,
-                singleEvents=True,
-            ).execute()
+            if all_day:
+                existing = service.events().list(
+                    calendarId=calendar_id,
+                    timeMin=event.date.isoformat(),
+                    timeMax=(event.date + timedelta(days=1)).isoformat(),
+                    q=event.title,
+                    singleEvents=True,
+                ).execute()
+            else:
+                existing = service.events().list(
+                    calendarId=calendar_id,
+                    timeMin=event.date.isoformat(),
+                    timeMax=(event.date + timedelta(minutes=1)).isoformat(),
+                    q=event.title,
+                    singleEvents=True,
+                ).execute()
         except Exception as e:
             print(f"[gcal] Error checking duplicates for '{event.title}': {e}")
             skipped += 1
@@ -66,7 +81,13 @@ def add_events(events: list[Event], calendar_id: str, dry_run: bool) -> dict:
             skipped += 1
             continue
 
-        end_dt = event.end_date if event.end_date else event.date + timedelta(hours=2)
+        if all_day:
+            start = {"date": date_str}
+            end = {"date": date_str}
+        else:
+            end_dt = event.end_date if event.end_date else event.date + timedelta(hours=2)
+            start = {"dateTime": event.date.isoformat(), "timeZone": "Europe/Zurich"}
+            end = {"dateTime": end_dt.isoformat(), "timeZone": "Europe/Zurich"}
 
         body = {
             "summary": event.title,
@@ -74,14 +95,8 @@ def add_events(events: list[Event], calendar_id: str, dry_run: bool) -> dict:
             "description": (
                 f"{event.description}\n\nSource: {event.url}\nSchool: {event.source}"
             ),
-            "start": {
-                "dateTime": event.date.isoformat(),
-                "timeZone": "Europe/Zurich",
-            },
-            "end": {
-                "dateTime": end_dt.isoformat(),
-                "timeZone": "Europe/Zurich",
-            },
+            "start": start,
+            "end": end,
             "extendedProperties": {
                 "private": {
                     "source_url": event.url,
