@@ -95,6 +95,12 @@ def add_events(events: list[Event], calendar_id: str, dry_run: bool) -> dict:
             start = {"dateTime": event.date.isoformat(), "timeZone": "Europe/Zurich"}
             end = {"dateTime": end_dt.isoformat(), "timeZone": "Europe/Zurich"}
 
+        # Guard: end must be after start
+        if event.end_date and event.end_date <= event.date:
+            print(f"[gcal] Skipping '{event.title}': end_date not after start_date")
+            skipped += 1
+            continue
+
         body = {
             "summary": event.title,
             "location": event.location,

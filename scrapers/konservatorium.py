@@ -89,28 +89,44 @@ def _parse_date_string(raw: str) -> tuple[datetime | None, datetime | None, str]
     if not matches:
         return None, None, ""
 
-    # Build datetime for each match, propagating year forward from the
-    # nearest match that has an explicit year.
-    datetimes = []
-    last_year = datetime.now(ZURICH).year
+    # First pass: collect which matches have explicit years
+    explicit_years = [int(m.group(3)) if m.group(3) else None for m in matches]
 
-    for m in matches:
+    # Second pass: fill missing years from the nearest explicit year
+    # (look right first, then left)
+    years = list(explicit_years)
+    # Forward fill from left
+    last = datetime.now(ZURICH).year  # fallback only if no explicit year anywhere
+    for i in range(len(years)):
+        if years[i] is not None:
+            last = years[i]
+        else:
+            years[i] = last  # tentative, may be overwritten by backward pass
+
+    # Backward fill from right — explicit years to the right take priority
+    # over the left-to-right default
+    last = None
+    for i in range(len(years) - 1, -1, -1):
+        if explicit_years[i] is not None:
+            last = explicit_years[i]
+        elif last is not None:
+            years[i] = last  # override with rightward explicit year
+
+    # Build datetimes
+    valid = []
+    for m, year in zip(matches, years):
         day = int(m.group(1))
         month = _parse_month(m.group(2))
         if month == 0:
-            datetimes.append(None)
             continue
-        year = int(m.group(3)) if m.group(3) else last_year
-        last_year = year
         hour   = int(m.group(4)) if m.group(4) else 0
         minute = int(m.group(5)) if m.group(5) else 0
         try:
-            datetimes.append(_build_dt(day, month, year, hour, minute))
+            valid.append((m, _build_dt(day, month, year, hour, minute)))
         except ValueError:
-            datetimes.append(None)
+            continue
 
     # Drop failed parses
-    valid = [(m, dt) for m, dt in zip(matches, datetimes) if dt is not None]
     if not valid:
         return None, None, ""
 
