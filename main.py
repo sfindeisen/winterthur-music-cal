@@ -13,6 +13,11 @@ def parse_args():
         description="Scrape Winterthur music school events and add to Google Calendar."
     )
     parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print each event as it is added or skipped",
+    )
+    parser.add_argument(
         "--school",
         choices=["all", "jugendmusikschule", "prova", "konservatorium"],
         default="all",
@@ -104,7 +109,7 @@ def main():
         return
 
     from gcal import add_events
-    result = add_events(events, args.calendar_id, dry_run=False)
+    result = add_events(events, args.calendar_id, dry_run=False, verbose=args.verbose)
     print(f"{result['added']} added to Google Calendar, {result['skipped']} skipped (already exist)")
 
 

@@ -1,5 +1,6 @@
+import hashlib
 import os
-from datetime import timedelta, date as date_type
+from datetime import timedelta
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -35,12 +36,18 @@ def _get_credentials() -> Credentials:
     return creds
 
 
+def _event_hash(event: Event) -> str:
+    """Stable 16-char hex key uniquely identifying this event."""
+    key = f"{event.title}|{event.date.isoformat()}|{event.location}|{event.source}"
+    return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
 def _is_all_day(event: Event) -> bool:
-    """True when the scraper found no time — stored as midnight."""
     return event.date.hour == 0 and event.date.minute == 0
 
 
-def add_events(events: list[Event], calendar_id: str, dry_run: bool) -> dict:
+def add_events(events: list[Event], calendar_id: str, dry_run: bool,
+               verbose: bool = False) -> dict:
     if dry_run:
         return {"added": 0, "skipped": 0}
 
@@ -51,55 +58,46 @@ def add_events(events: list[Event], calendar_id: str, dry_run: bool) -> dict:
     skipped = 0
 
     for event in events:
-        all_day = _is_all_day(event)
-        date_str = event.date.strftime("%Y-%m-%d")
+        h = _event_hash(event)
 
-        # Dedup check
+        # Exact dedup via privateExtendedProperty — no fuzzy text search
         try:
-            if all_day:
-                existing = service.events().list(
-                    calendarId=calendar_id,
-                    timeMin=event.date.isoformat(),
-                    timeMax=(event.date + timedelta(days=1)).isoformat(),
-                    q=event.title + '###' + event.location,
-                    singleEvents=True,
-                ).execute()
-            else:
-                existing = service.events().list(
-                    calendarId=calendar_id,
-                    timeMin=event.date.isoformat(),
-                    timeMax=(event.date + timedelta(minutes=1)).isoformat(),
-                    q=event.title + '###' + event.location,
-                    singleEvents=True,
-                ).execute()
+            existing = service.events().list(
+                calendarId=calendar_id,
+                privateExtendedProperty=f"wmc_hash={h}",
+                singleEvents=True,
+            ).execute()
         except Exception as e:
             print(f"[gcal] Error checking duplicates for '{event.title}': {e}")
             skipped += 1
             continue
 
         if existing.get("items"):
+            if verbose:
+                print(f"  SKIP (exists): {event.title} | {event.date.strftime('%d.%m.%Y %H:%M')} | {event.location}")
             skipped += 1
             continue
 
+        # Sanity check: end must be after start
+        if event.end_date and event.end_date <= event.date:
+            print(f"[gcal] Skipping '{event.title}': end_date not after start_date")
+            skipped += 1
+            continue
+
+        all_day = _is_all_day(event)
+        date_str = event.date.strftime("%Y-%m-%d")
+
         if all_day:
-            start = {"date": date_str}
-            # For multi-day events, end date is exclusive in Google Calendar
-            # (so an event Jun 12-18 needs end = Jun 19)
             if event.end_date:
                 end_date_str = (event.end_date + timedelta(days=1)).strftime("%Y-%m-%d")
             else:
-                end_date_str = date_str
+                end_date_str = (event.date + timedelta(days=1)).strftime("%Y-%m-%d")
+            start = {"date": date_str}
             end = {"date": end_date_str}
         else:
             end_dt = event.end_date if event.end_date else event.date + timedelta(hours=2)
             start = {"dateTime": event.date.isoformat(), "timeZone": "Europe/Zurich"}
             end = {"dateTime": end_dt.isoformat(), "timeZone": "Europe/Zurich"}
-
-        # Guard: end must be after start
-        if event.end_date and event.end_date <= event.date:
-            print(f"[gcal] Skipping '{event.title}': end_date not after start_date")
-            skipped += 1
-            continue
 
         body = {
             "summary": event.title,
@@ -111,6 +109,7 @@ def add_events(events: list[Event], calendar_id: str, dry_run: bool) -> dict:
             "end": end,
             "extendedProperties": {
                 "private": {
+                    "wmc_hash": h,
                     "source_url": event.url,
                     "source_school": event.source,
                 }
@@ -119,10 +118,11 @@ def add_events(events: list[Event], calendar_id: str, dry_run: bool) -> dict:
 
         try:
             service.events().insert(calendarId=calendar_id, body=body).execute()
+            if verbose:
+                print(f"  ADD: {event.title} | {event.date.strftime('%d.%m.%Y %H:%M')} | {event.location}")
             added += 1
         except Exception as e:
             print(f"[gcal] Error inserting '{event.title}': {e}")
             skipped += 1
 
     return {"added": added, "skipped": skipped}
-
