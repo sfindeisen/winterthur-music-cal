@@ -72,13 +72,21 @@ def filter_events(events, days_ahead: int):
 
 
 def print_table(events):
-    print(f"\n{'School':<30} {'Date':<18} Title")
-    print("-" * 80)
     for ev in events:
-        date_str = ev.date.strftime("%a %d.%m.%Y %H:%M")
-        print(f"{ev.source:<30} {date_str:<18} {ev.title}")
-        if ev.location:
-            print(f"{'':30} {'':18} {ev.location}")
+        start_str = ev.date.strftime("%a %d.%m.%Y %H:%M")
+        if ev.end_date:
+            end_str = ev.end_date.strftime("%a %d.%m.%Y %H:%M")
+        elif ev.date.hour == 0 and ev.date.minute == 0:
+            end_str = "(all-day)"
+        else:
+            from datetime import timedelta
+            end_str = (ev.date + timedelta(hours=2)).strftime("%a %d.%m.%Y %H:%M")
+        print(f"Source:   {ev.source}")
+        print(f"Title:    {ev.title}")
+        print(f"Start:    {start_str}")
+        print(f"End:      {end_str}")
+        print(f"Location: {ev.location}")
+        print()
 
 
 def main():
