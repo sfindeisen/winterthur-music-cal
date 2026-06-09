@@ -25,69 +25,116 @@ DE_MONTHS = {
     "januar": 1, "februar": 2, "märz": 3, "april": 4,
     "mai": 5, "juni": 6, "juli": 7, "august": 8,
     "september": 9, "oktober": 10, "november": 11, "dezember": 12,
-    # typos seen in the wild
     "januer": 1, "mäz": 3, "mörz": 3,
 }
 
-# Matches the first real date in a string like "Samstag, 04. Juli 2026, 19 Uhr, Serenadenplatz"
-# Also handles missing year, missing time, ab/ca. prefixes, colons in time
-DATE_RE = re.compile(
+WEEKDAYS = r"(?:Mo|Di|Mi|Do|Fr|Sa|So|Montag|Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag)"
+
+# Matches a single date+optional-time fragment:
+# e.g. "14. April 2026, 18.30 Uhr" or "12. Juni" (no year, no time)
+SINGLE_DATE_RE = re.compile(
     r"""
-    (?:(?:Mo|Di|Mi|Do|Fr|Sa|So|Montag|Dienstag|Mittwoch|Donnerstag|
-          Freitag|Samstag|Sonntag)[.,\s-]*)?  # optional weekday
-    (\d{1,2})\.?\s+                            # day
-    ([A-Za-zäöüÄÖÜ]+)\s*                       # month name
-    (\d{4})?                                   # optional year
-    (?:[,\s]+                                  # separator
-      (?:ab\s+|ca\.\s+)?                       # optional prefix
-      (\d{1,2})[.:\s](\d{2})?                 # hour and optional minute
-      \s*Uhr                                   # "Uhr"
-    )?
+    (?:""" + WEEKDAYS + r"""[.,\s-]*)?   # optional weekday
+    (\d{1,2})\.?\s+                       # day
+    ([A-Za-zäöüÄÖÜ]+)\s*                  # month name
+    (\d{4})?                              # optional year
+    (?:[,\s]+
+      (?:ab\s+|ca\.\s+)?
+      (\d{1,2})[.:\s](\d{2})?
+      \s*Uhr
+    )?                                    # optional time
     """,
     re.VERBOSE | re.IGNORECASE,
 )
 
+# Separators between two dates in a range
+RANGE_SEP_RE = re.compile(r"\s*(?:–|—|-{1,2}|bis)\s*", re.IGNORECASE)
 
-def _parse_date_string(raw: str) -> tuple[datetime | None, str]:
-    """
-    Parse the first date found in raw.
-    Returns (datetime_aware, location_string).
-    Location is everything after the last time reference, or after the date.
-    """
-    # Normalise: collapse whitespace, strip
-    raw = " ".join(raw.split())
 
-    m = DATE_RE.search(raw)
+def _parse_month(name: str) -> int:
+    return DE_MONTHS.get(name.lower().strip(), 0)
+
+
+def _build_dt(day: int, month: int, year: int, hour: int, minute: int) -> datetime:
+    return ZURICH.localize(datetime(year, month, day, hour, minute, 0))
+
+
+def _parse_single(text: str) -> datetime | None:
+    """Parse the first date+time found in text. Returns None on failure."""
+    m = SINGLE_DATE_RE.search(text)
     if not m:
-        return None, ""
-
+        return None
     day = int(m.group(1))
-    month_str = m.group(2).lower()
-    month = DE_MONTHS.get(month_str, 0)
+    month = _parse_month(m.group(2))
     if month == 0:
-        return None, ""
-
-    year_str = m.group(3)
-    year = int(year_str) if year_str else datetime.now(ZURICH).year
-
+        return None
+    year = int(m.group(3)) if m.group(3) else datetime.now(ZURICH).year
     hour = int(m.group(4)) if m.group(4) else 0
     minute = int(m.group(5)) if m.group(5) else 0
-
     try:
-        dt = datetime(year, month, day, hour, minute, 0)
-        dt = ZURICH.localize(dt)
+        return _build_dt(day, month, year, hour, minute)
     except ValueError:
-        return None, ""
+        return None
 
-    # Location: text after the match end, strip leading comma/spaces/dash
-    tail = raw[m.end():].strip().lstrip(",–-").strip()
-    # Remove trailing price/note fragments that start with common keywords
+
+def _parse_date_string(raw: str) -> tuple[datetime | None, datetime | None, str]:
+    """
+    Returns (start_dt, end_dt, location).
+    Handles single dates, dash ranges, and multiple dates (;  /  and).
+    end_dt is None for single-day/timed events.
+    """
+    raw = " ".join(raw.split())
+
+    matches = list(SINGLE_DATE_RE.finditer(raw))
+    if not matches:
+        return None, None, ""
+
+    # Build datetime for each match, propagating year forward from the
+    # nearest match that has an explicit year.
+    datetimes = []
+    last_year = datetime.now(ZURICH).year
+
+    for m in matches:
+        day = int(m.group(1))
+        month = _parse_month(m.group(2))
+        if month == 0:
+            datetimes.append(None)
+            continue
+        year = int(m.group(3)) if m.group(3) else last_year
+        last_year = year
+        hour   = int(m.group(4)) if m.group(4) else 0
+        minute = int(m.group(5)) if m.group(5) else 0
+        try:
+            datetimes.append(_build_dt(day, month, year, hour, minute))
+        except ValueError:
+            datetimes.append(None)
+
+    # Drop failed parses
+    valid = [(m, dt) for m, dt in zip(matches, datetimes) if dt is not None]
+    if not valid:
+        return None, None, ""
+
+    start_match, start_dt = valid[0]
+    end_match,   end_dt   = valid[-1]
+
+    # Location: text after the last valid match
+    tail = raw[end_match.end():].strip().lstrip(",;/–-").strip()
+    location = _clean_location(tail)
+
+    # Only set end_dt when there really are multiple dates
+    if len(valid) == 1:
+        end_dt = None
+
+    return start_dt, end_dt, location
+
+
+def _clean_location(tail: str) -> str:
+    """Strip price/note fragments from a location string."""
     for kw in ["Eintritt", "Preise", "Fr.", "CHF", "Gratis", "Anmeldung"]:
         idx = tail.find(kw)
         if idx != -1:
             tail = tail[:idx].strip().rstrip(",").strip()
-
-    return dt, tail
+    return tail
 
 
 def _scrape_one_url(url: str) -> list[Event]:
@@ -108,7 +155,6 @@ def _scrape_one_url(url: str) -> list[Event]:
         if not title:
             continue
 
-        # Collect the next sibling divs
         sibs = []
         for sib in h2.next_siblings:
             if not hasattr(sib, "name") or sib.name is None:
@@ -123,19 +169,17 @@ def _scrape_one_url(url: str) -> list[Event]:
         if not sibs:
             continue
 
-        # First div is the date line
         date_div_text = sibs[0].get_text(strip=True)
-        dt, location = _parse_date_string(date_div_text)
-        if dt is None:
+        start_dt, end_dt, location = _parse_date_string(date_div_text)
+        if start_dt is None:
             continue
 
-        # Second div (if present) is the description
         description = sibs[1].get_text(strip=True) if len(sibs) > 1 else ""
 
         events.append(Event(
             title=title,
-            date=dt,
-            end_date=None,
+            date=start_dt,
+            end_date=end_dt,
             location=location,
             description=description,
             url=url,
@@ -150,7 +194,6 @@ def scrape() -> list[Event]:
     for url in URLS:
         all_events.extend(_scrape_one_url(url))
 
-    # Deduplicate: same title + same minute = same event
     seen: set[tuple[str, datetime]] = set()
     unique: list[Event] = []
     for ev in all_events:

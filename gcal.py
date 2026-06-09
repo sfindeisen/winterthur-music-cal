@@ -83,7 +83,13 @@ def add_events(events: list[Event], calendar_id: str, dry_run: bool) -> dict:
 
         if all_day:
             start = {"date": date_str}
-            end = {"date": date_str}
+            # For multi-day events, end date is exclusive in Google Calendar
+            # (so an event Jun 12-18 needs end = Jun 19)
+            if event.end_date:
+                end_date_str = (event.end_date + timedelta(days=1)).strftime("%Y-%m-%d")
+            else:
+                end_date_str = date_str
+            end = {"date": end_date_str}
         else:
             end_dt = event.end_date if event.end_date else event.date + timedelta(hours=2)
             start = {"dateTime": event.date.isoformat(), "timeZone": "Europe/Zurich"}
