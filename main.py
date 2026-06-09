@@ -81,11 +81,11 @@ def print_table(events):
         else:
             from datetime import timedelta
             end_str = (ev.date + timedelta(hours=2)).strftime("%a %d.%m.%Y %H:%M")
-        print(f"Source:   {ev.source}")
         print(f"Title:    {ev.title}")
         print(f"Start:    {start_str}")
         print(f"End:      {end_str}")
         print(f"Location: {ev.location}")
+        print(f"Source:   {ev.source}")
         print()
 
 
